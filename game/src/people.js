@@ -1,7 +1,11 @@
 // The people of Neon Bay: pedestrians strolling the sidewalks who scatter when shots
 // ring out, foot cops who join the chase at higher wanted levels, and the armed Marina
-// crew for the final mission. Every person is a small group of boxes with a procedural
-// walk cycle (legs and arms swing with speed), so no animation files are needed.
+// crew for the final mission. Every person is built procedurally from three.js geometry:
+// a proportional body with a pelvis, a tapered chest, a neck and a real head (hair, nose,
+// eyes), articulated arms and legs — thigh and shin joined at a knee, upper arm and
+// forearm joined at an elbow — so the walk cycle bends knees and elbows instead of
+// swinging stiff boards. Shoes, caps, beanies, police badges and a guard's pistol are
+// small meshes parented to the limb that carries them, so they move with the walk.
 
 import * as THREE from 'three';
 import { ROAD_LINES } from './config.js';
@@ -9,57 +13,230 @@ import { clamp, wrapAngle, angleDelta } from './random.js';
 
 const SHIRT_COLORS = [0xd84a4a, 0x4a8ad8, 0x4ad88a, 0xd8c34a, 0x9a5fd8, 0xe0e0e0, 0x2e2e38, 0xe07b2e];
 const SKIN_COLORS = [0xe8b98a, 0xc98d5f, 0x8a5a34, 0xf0c8a0];
+const HAIR_COLORS = [0x1a1210, 0x3a2418, 0x6b4a2a, 0xb9b9b9, 0x0e0e0e, 0x8a2a1a];
+const PANTS_COLORS = [0x2a2d38, 0x3a3f4a, 0x4a3a2a, 0x22242c, 0x5a6b7a];
 
-/** Build one low-poly person: torso, head, two legs, two arms. */
-export function buildPersonMesh(shirt, skin, police = false) {
-  const group = new THREE.Group();
-  const shirtMat = new THREE.MeshStandardMaterial({ color: police ? 0x1c2f6e : shirt, roughness: 0.85 });
-  const skinMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.7 });
-  const pantsMat = new THREE.MeshStandardMaterial({ color: police ? 0x14161d : 0x2a2d38, roughness: 0.9 });
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.62, 0.3), shirtMat);
-  torso.position.y = 1.12;
-  torso.castShadow = true;
-  group.add(torso);
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), skinMat);
-  head.position.y = 1.62;
-  head.castShadow = true;
-  group.add(head);
-  if (police) {
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.1, 0.36), new THREE.MeshStandardMaterial({ color: 0x10131c }));
-    cap.position.y = 1.8;
-    group.add(cap);
-  }
-  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.8, 0.22), pantsMat);
-  legL.geometry.translate(0, -0.4, 0);
-  legL.position.set(-0.14, 0.8, 0);
-  group.add(legL);
-  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.8, 0.22), pantsMat);
-  legR.geometry.translate(0, -0.4, 0);
-  legR.position.set(0.14, 0.8, 0);
-  group.add(legR);
-  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.62, 0.16), shirtMat);
-  armL.geometry.translate(0, -0.31, 0);
-  armL.position.set(-0.34, 1.38, 0);
-  group.add(armL);
-  const armR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.62, 0.16), shirtMat);
-  armR.geometry.translate(0, -0.31, 0);
-  armR.position.set(0.34, 1.38, 0);
-  group.add(armR);
-  return { group, legL, legR, armL, armR };
+function std(color, roughness = 0.85, metalness = 0) {
+  return new THREE.MeshStandardMaterial({ color, roughness, metalness });
 }
 
-/** Swing the limbs for a walk cycle; phase advances with distance walked. */
+/** One leg: thigh pivoting at the hip, shin pivoting at the knee, shoe on the foot. */
+function buildLeg(pantsMat, shoeMat, side) {
+  const hip = new THREE.Group();
+  hip.position.set(0.13 * side, 0.98, 0);
+  const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.48, 0.21), pantsMat);
+  thigh.geometry.translate(0, -0.24, 0);
+  thigh.castShadow = true;
+  hip.add(thigh);
+  const knee = new THREE.Group();
+  knee.position.set(0, -0.48, 0);
+  hip.add(knee);
+  const shin = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.44, 0.18), pantsMat);
+  shin.geometry.translate(0, -0.22, 0);
+  shin.castShadow = true;
+  knee.add(shin);
+  const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.09, 0.3), shoeMat);
+  shoe.position.set(0, -0.44, 0.05);
+  shoe.castShadow = true;
+  knee.add(shoe);
+  return { hip, knee };
+}
+
+/** One arm: upper arm pivoting at the shoulder, forearm at the elbow, hand at the end. */
+function buildArm(shirtMat, skinMat, side) {
+  const shoulder = new THREE.Group();
+  shoulder.position.set(0.33 * side, 1.48, 0);
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.32, 0.15), shirtMat);
+  upper.geometry.translate(0, -0.16, 0);
+  upper.castShadow = true;
+  shoulder.add(upper);
+  const elbow = new THREE.Group();
+  elbow.position.set(0, -0.32, 0);
+  shoulder.add(elbow);
+  const forearm = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.3, 0.13), shirtMat);
+  forearm.geometry.translate(0, -0.15, 0);
+  forearm.castShadow = true;
+  elbow.add(forearm);
+  const hand = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.06), skinMat);
+  hand.position.set(0, -0.33, 0);
+  elbow.add(hand);
+  return { shoulder, elbow, hand };
+}
+
+/**
+ * Build one person. Returns the outer group plus the pivots the walk cycle drives:
+ * legL/legR are the hip groups, kneeL/kneeR the knee groups, armL/armR the shoulder
+ * groups, elbowL/elbowR the elbow groups, rig the inner group that bobs with the step.
+ * `variant` is 'ped' | 'cop' | 'guard' | 'cap' | 'hoodie'; police/cop also takes the
+ * `police` flag for the navy uniform. The player is built with the default variant.
+ */
+export function buildPersonMesh(shirt, skin, police = false, variant = 'ped') {
+  const group = new THREE.Group();
+  const rig = new THREE.Group();
+  group.add(rig);
+  const shirtMat = std(police ? 0x1c2f6e : shirt, 0.85);
+  const skinMat = std(skin, 0.7);
+  // Pants and hair are picked deterministically from the shirt/skin colours, never from
+  // Math.random(): the same seed must build the same person every load.
+  const pantsMat = std(police ? 0x14161d : PANTS_COLORS[(shirt ^ 0x5f3a) % PANTS_COLORS.length], 0.9);
+  const shoeMat = std(0x1c1a18, 0.6);
+  const hairMat = std(HAIR_COLORS[(skin ^ 0x2b7d) % HAIR_COLORS.length], 0.95);
+
+  // Legs with knees.
+  const legL = buildLeg(pantsMat, shoeMat, -1);
+  const legR = buildLeg(pantsMat, shoeMat, 1);
+  rig.add(legL.hip, legR.hip);
+
+  // Pelvis, belt, chest and shoulders: a torso that reads as a torso, not a slab.
+  const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.2, 0.28), pantsMat);
+  pelvis.position.y = 1.04;
+  pelvis.castShadow = true;
+  rig.add(pelvis);
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.07, 0.3), std(0x14100c, 0.7));
+  belt.position.y = 1.14;
+  rig.add(belt);
+  const chest = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.42, 0.3), shirtMat);
+  chest.position.y = 1.34;
+  chest.castShadow = true;
+  rig.add(chest);
+  const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.12, 0.32), shirtMat);
+  shoulders.position.y = 1.52;
+  shoulders.castShadow = true;
+  rig.add(shoulders);
+  if (variant === 'guard') {
+    // A dark vest over the shirt: the Marina crew reads as armed at a glance.
+    const vest = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.34, 0.34), std(0x2e1a1a, 0.9));
+    vest.position.y = 1.34;
+    rig.add(vest);
+  }
+  if (variant === 'hoodie') {
+    // A hood bump behind the neck and a kangaroo pocket on the belly.
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.16, 0.12), shirtMat);
+    hood.position.set(0, 1.56, -0.18);
+    rig.add(hood);
+    const pocket = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.16, 0.04), std(0x22242c, 0.9));
+    pocket.position.set(0, 1.18, 0.16);
+    rig.add(pocket);
+  }
+  const collar = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.24), shirtMat);
+  collar.position.y = 1.58;
+  rig.add(collar);
+
+  // Neck and head: a rounded head with hair, a nose and eyes.
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.1, 8), skinMat);
+  neck.position.y = 1.6;
+  rig.add(neck);
+  const head = new THREE.Group();
+  head.position.y = 1.72;
+  rig.add(head);
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 12), skinMat);
+  skull.scale.set(1, 1.15, 1.05);
+  skull.castShadow = true;
+  head.add(skull);
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.06), skinMat);
+  nose.position.set(0, -0.02, 0.17);
+  head.add(nose);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x14100c });
+  for (const ex of [-0.06, 0.06]) {
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.045, 0.02), eyeMat);
+    eye.position.set(ex, 0.03, 0.155);
+    head.add(eye);
+  }
+  if (police) {
+    // Peaked cap with a brim, plus a badge on the chest.
+    const capTop = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.07, 12), std(0x10131c, 0.6));
+    capTop.position.y = 0.16;
+    head.add(capTop);
+    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.02, 0.14), std(0x0c0e14, 0.5));
+    brim.position.set(0, 0.13, 0.18);
+    head.add(brim);
+    const badge = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.02), new THREE.MeshBasicMaterial({ color: 0xffd23e }));
+    badge.position.set(0.14, 1.4, 0.16);
+    rig.add(badge);
+  } else if (variant === 'guard') {
+    // A dark beanie pulled low.
+    const beanie = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+      std(0x1c1a18, 0.95),
+    );
+    beanie.position.y = 0.04;
+    beanie.scale.set(1, 0.85, 1);
+    head.add(beanie);
+  } else if (variant === 'cap') {
+    const capTop = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.08, 12), std(0xd84a4a, 0.8));
+    capTop.position.y = 0.15;
+    head.add(capTop);
+    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.02, 0.13), std(0xd84a4a, 0.8));
+    brim.position.set(0, 0.12, 0.17);
+    head.add(brim);
+  } else {
+    // Hair: a cap of hair over the top and back of the skull.
+    const hair = new THREE.Mesh(
+      new THREE.SphereGeometry(0.178, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
+      hairMat,
+    );
+    hair.position.set(0, 0.03, -0.015);
+    hair.scale.set(1, 0.9, 1);
+    head.add(hair);
+  }
+
+  // Arms with elbows.
+  const armL = buildArm(shirtMat, skinMat, -1);
+  const armR = buildArm(shirtMat, skinMat, 1);
+  rig.add(armL.shoulder, armR.shoulder);
+  if (variant === 'guard') {
+    // A pistol held in the right hand.
+    const pistol = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.18), std(0x0c0d10, 0.5, 0.6));
+    pistol.position.set(0, -0.36, 0.06);
+    armR.elbow.add(pistol);
+  }
+
+  return {
+    group,
+    rig,
+    head,
+    legL: legL.hip,
+    legR: legR.hip,
+    kneeL: legL.knee,
+    kneeR: legR.knee,
+    armL: armL.shoulder,
+    armR: armR.shoulder,
+    elbowL: armL.elbow,
+    elbowR: armR.elbow,
+  };
+}
+
+/**
+ * Swing the limbs for a walk cycle; phase advances with distance walked, amount is 0
+ * at a standstill and 1 at a run. Hips swing, knees bend as the leg lifts forward,
+ * arms counter-swing with a slight elbow bend, and the rig bobs and leans a touch.
+ */
 export function animateWalk(mesh, phase, amount) {
-  const swing = Math.sin(phase) * 0.55 * amount;
+  const swing = Math.sin(phase) * 0.5 * amount;
   mesh.legL.rotation.x = swing;
   mesh.legR.rotation.x = -swing;
-  mesh.armL.rotation.x = -swing * 0.8;
-  mesh.armR.rotation.x = swing * 0.8;
+  mesh.kneeL.rotation.x = Math.max(0, Math.sin(phase + 0.4)) * 0.75 * amount;
+  mesh.kneeR.rotation.x = Math.max(0, Math.sin(phase + Math.PI + 0.4)) * 0.75 * amount;
+  mesh.armL.rotation.x = -swing * 0.85;
+  mesh.armR.rotation.x = swing * 0.85;
+  mesh.elbowL.rotation.x = -0.18 - 0.22 * amount;
+  mesh.elbowR.rotation.x = -0.18 - 0.22 * amount;
+  mesh.rig.position.y = Math.abs(Math.cos(phase)) * 0.035 * amount;
+  mesh.rig.rotation.x = 0.05 * amount;
+}
+
+function pickVariant(random) {
+  const roll = random.range(0, 1);
+  if (roll < 0.22) return 'cap';
+  if (roll < 0.42) return 'hoodie';
+  return 'ped';
 }
 
 export function makePedestrian(random, x, z) {
-  const mesh = buildPersonMesh(random.pick(SHIRT_COLORS), random.pick(SKIN_COLORS));
+  const variant = pickVariant(random);
+  const mesh = buildPersonMesh(random.pick(SHIRT_COLORS), random.pick(SKIN_COLORS), false, variant);
   mesh.group.position.set(x, 0, z);
+  mesh.group.scale.setScalar(random.range(0.94, 1.06));
   return {
     kind: 'ped',
     x,
@@ -80,7 +257,7 @@ export function makePedestrian(random, x, z) {
 }
 
 export function makeCop(random, x, z) {
-  const mesh = buildPersonMesh(0x1c2f6e, random.pick(SKIN_COLORS), true);
+  const mesh = buildPersonMesh(0x1c2f6e, random.pick(SKIN_COLORS), true, 'cop');
   mesh.group.position.set(x, 0, z);
   return {
     kind: 'cop',
@@ -96,7 +273,7 @@ export function makeCop(random, x, z) {
 }
 
 export function makeGuard(random, x, z) {
-  const mesh = buildPersonMesh(0x3a1c1c, random.pick(SKIN_COLORS));
+  const mesh = buildPersonMesh(0x3a1c1c, random.pick(SKIN_COLORS), false, 'guard');
   mesh.group.position.set(x, 0, z);
   return {
     kind: 'guard',

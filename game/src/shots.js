@@ -208,9 +208,13 @@ export function stageShot(name, game, world, renderer) {
       }
     }
     window.__neonTrace = trace;
-    // Lower chase cam like the cover: the car reads from behind, the roof does not
-    // catch the low sun and bloom out to white.
-    fixedCamera(renderer, car.x, car.z, car.heading, 16, 3, 5.0, 14);
+    // Side-on from the south: the car reads broadside with its new detail, and the
+    // low western sun stays out of frame — a chase cam here looks straight west
+    // into it and blooms the car to white.
+    renderer.setFixed({
+      position: new THREE.Vector3(car.x + 1, 4.5, car.z + 15),
+      look: new THREE.Vector3(car.x - 4, 1.8, car.z - 1),
+    });
     beacon.update(game.missions.marker, game.time);
     return beacon;
   }
