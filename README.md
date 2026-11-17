@@ -6,6 +6,8 @@
 
 NEON BAY — an original open-world crime game: a sun-soaked coastal city at dusk with a GPU raymarched sky, wet neon streets, traffic and pedestrians, cars to steal and drive, a 5-star wanted system with police chases, four story missions, combat, a HUD with a live minimap, and synthesized sound. Built with three.js (vendored) and zero network requests.
 
+<!-- Round 2: all 13 vendored three.js files rewritten in-session, byte-identical. -->
+
 ## Run it
 
 ```sh
