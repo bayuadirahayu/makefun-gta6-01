@@ -1,3 +1,4 @@
+// NEON BAY round 3 — witnessed rewrite
 /**
  * @module OutputShader
  * @three_import import { OutputShader } from 'three/addons/shaders/OutputShader.js';

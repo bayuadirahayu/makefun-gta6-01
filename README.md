@@ -19,3 +19,4 @@ Then open http://localhost:8080.
 ---
 
 <sub>Entered on [make.fun](https://make.fun/?ref=ctt3v4nv&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
+<!-- round 3: witnessed rewrite -->
