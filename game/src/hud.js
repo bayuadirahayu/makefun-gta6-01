@@ -1,17 +1,15 @@
-// The HUD: health bar, cash, wanted stars, clock, objective panel, speedometer and a
-// live 2D minimap drawn on a canvas — roads, the beach and the water, the player arrow,
-// the mission marker and every police blip. The HUD is plain DOM over the WebGL canvas
-// (fast, crisp text, no extra draw calls), and the minimap is a canvas so it can be
-// repainted every frame for almost nothing.
+// GTA 6-style HUD: bare-text stars/cash/clock top-right, circular player-centred
+// minimap bottom-left with health/armor bars, weapon + ammo bottom-right.
+import { PALETTE, ROAD_LINES, CITY, DISTRICTS } from './config.js';
 
-import { PALETTE, ROAD_LINES, CITY } from './config.js';
-
-const MINIMAP_SIZE = 220;
+const SIZE = 220, R = 150, HALF = SIZE / 2;
 
 export function createHud() {
   const root = document.getElementById('hud');
   const healthFill = document.getElementById('health-fill');
   const healthText = document.getElementById('health-text');
+  const armorBar = document.getElementById('armorbar');
+  const armorFill = document.getElementById('armor-fill');
   const moneyText = document.getElementById('money');
   const starsBox = document.getElementById('stars');
   const clockText = document.getElementById('clock');
@@ -20,6 +18,7 @@ export function createHud() {
   const objectiveText = document.getElementById('objective-text');
   const speedBox = document.getElementById('speedo');
   const speedText = document.getElementById('speed');
+  const weaponName = document.getElementById('weapon-name');
   const ammoText = document.getElementById('ammo');
   const toastBox = document.getElementById('toast');
   const crosshair = document.getElementById('crosshair');
@@ -27,6 +26,8 @@ export function createHud() {
   const mapCtx = mapCanvas.getContext('2d');
 
   let toastTimer = 0;
+  let cx = null, cz = null;
+  weaponName.textContent = 'PISTOL'; // the only weapon in the game
 
   function showToast(message, seconds = 3) {
     toastBox.textContent = message;
@@ -36,68 +37,80 @@ export function createHud() {
 
   function drawMinimap(state) {
     const ctx = mapCtx;
-    const size = MINIMAP_SIZE;
-    const scale = size / (CITY.groundSize + 120);
-    const toMap = (v) => size / 2 + v * scale;
-    ctx.clearRect(0, 0, size, size);
-    // The city block.
+    if (cx === null) { cx = state.px; cz = state.pz; }
+    cx += (state.px - cx) * 0.2; // smooth follow, no snapping
+    cz += (state.pz - cz) * 0.2;
+    const scale = HALF / R;
+    const mx = (v) => HALF + (v - cx) * scale;
+    const my = (v) => HALF + (v - cz) * scale;
+    const x0 = cx - R, x1 = cx + R, z0 = cz - R, z1 = cz + R;
+    ctx.clearRect(0, 0, SIZE, SIZE);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(HALF, HALF, HALF, 0, Math.PI * 2);
+    ctx.clip();
     ctx.fillStyle = '#12141d';
-    ctx.fillRect(0, 0, size, size);
-    // Water west and south.
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    // Water west, sand strip + water south.
     ctx.fillStyle = '#0d4258';
-    ctx.fillRect(0, 0, toMap(CITY.waterWest), size);
-    ctx.fillStyle = '#0d4258';
-    ctx.fillRect(0, toMap(CITY.beachSouth + 56), size, size - toMap(CITY.beachSouth + 56));
-    // Sand strip.
+    ctx.fillRect(0, 0, mx(CITY.waterWest), SIZE);
     ctx.fillStyle = '#8a744a';
-    ctx.fillRect(0, toMap(CITY.beachSouth), size, toMap(CITY.beachSouth + 56) - toMap(CITY.beachSouth));
-    // Roads.
+    ctx.fillRect(0, my(CITY.beachSouth), SIZE, 56 * scale);
+    ctx.fillStyle = '#0d4258';
+    ctx.fillRect(0, my(CITY.beachSouth + 56), SIZE, SIZE);
+    // Roads, clipped to the view.
     ctx.strokeStyle = '#4a4e5c';
     ctx.lineWidth = Math.max(2, CITY.roadWidth * scale);
     for (const line of ROAD_LINES) {
-      ctx.beginPath();
-      ctx.moveTo(toMap(line), toMap(-208));
-      ctx.lineTo(toMap(line), toMap(208));
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(toMap(-208), toMap(line));
-      ctx.lineTo(toMap(208), toMap(line));
-      ctx.stroke();
+      if (line >= x0 && line <= x1) {
+        ctx.beginPath(); ctx.moveTo(mx(line), my(z0)); ctx.lineTo(mx(line), my(z1)); ctx.stroke();
+      }
+      if (line >= z0 && line <= z1) {
+        ctx.beginPath(); ctx.moveTo(mx(x0), my(line)); ctx.lineTo(mx(x1), my(line)); ctx.stroke();
+      }
     }
-    // The mission marker.
+    // District labels, small caps with a dark outline.
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    for (const d of DISTRICTS) {
+      const dx = d.centre[0], dz = d.centre[1];
+      if (dx < x0 || dx > x1 || dz < z0 || dz > z1) continue;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.strokeText(d.name.toUpperCase(), mx(dx), my(dz));
+      ctx.fillStyle = '#fff';
+      ctx.fillText(d.name.toUpperCase(), mx(dx), my(dz));
+    }
+    // Mission marker: yellow diamond with a pulsing ring.
     if (state.marker) {
-      const mx = toMap(state.marker.x);
-      const my = toMap(state.marker.z);
-      const pulse = 6 + Math.sin(state.time * 4) * 2;
+      const px = mx(state.marker.x), py = my(state.marker.z);
+      const pulse = 9 + Math.sin(state.time * 4) * 3;
+      ctx.strokeStyle = '#ffd23e';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(px, py, pulse, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = '#ffd23e';
       ctx.beginPath();
-      ctx.arc(mx, my, pulse, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#12141d';
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      ctx.moveTo(px, py - 7); ctx.lineTo(px + 7, py); ctx.lineTo(px, py + 7); ctx.lineTo(px - 7, py);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#12141d'; ctx.lineWidth = 1.5; ctx.stroke();
     }
-    // Police blips.
-    ctx.fillStyle = '#3b82ff';
+    // Police blips: blue circles with a white outline.
     for (const unit of state.police) {
       ctx.beginPath();
-      ctx.arc(toMap(unit.x), toMap(unit.z), 4, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.arc(mx(unit.x), my(unit.z), 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#3b82ff'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
     }
-    // The player arrow, pointing along the heading.
-    const px = toMap(state.px);
-    const py = toMap(state.pz);
+    // Player arrow, white with a dark outline, along the heading.
     ctx.save();
-    ctx.translate(px, py);
+    ctx.translate(mx(state.px), my(state.pz));
     ctx.rotate(state.heading);
-    ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.moveTo(0, -8);
-    ctx.lineTo(5.5, 6);
-    ctx.lineTo(0, 3);
-    ctx.lineTo(-5.5, 6);
+    ctx.moveTo(0, -9); ctx.lineTo(6, 7); ctx.lineTo(0, 3.5); ctx.lineTo(-6, 7);
     ctx.closePath();
-    ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.restore();
     ctx.restore();
   }
 
@@ -109,6 +122,10 @@ export function createHud() {
       healthFill.style.width = `${health}%`;
       healthFill.style.background = health > 50 ? '#37d67a' : health > 25 ? '#ffb02e' : '#ff3b30';
       healthText.textContent = `${health}`;
+      if (state.armor) {
+        armorBar.classList.remove('hidden');
+        armorFill.style.width = `${Math.max(0, Math.round(state.armor))}%`;
+      } else armorBar.classList.add('hidden');
       moneyText.textContent = `$${state.money.toLocaleString('en-US')}`;
       let stars = '';
       for (let i = 0; i < 5; i += 1) stars += i < state.wanted ? '★' : '☆';

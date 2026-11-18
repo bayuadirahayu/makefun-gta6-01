@@ -169,9 +169,11 @@ export function stageShot(name, game, world, renderer) {
     }
     // Side-on: the player car sweeps past with the police on its tail behind it.
     // The camera looks north-west, away from the low sun, so the glare stays out
-    // of frame and the police light bars read against the dusk sky.
+    // of frame and the police light bars read against the dusk sky. Camera z is
+    // 8 south of the car, not 2: a street-light pole stands at x=+7.2, z≈car.z-0.9,
+    // dead on the old sightline — the shift puts it ~28° off-axis, clear of the car.
     renderer.setFixed({
-      position: new THREE.Vector3(car.x + 16, 5, car.z - 2),
+      position: new THREE.Vector3(car.x + 16, 5, car.z - 8),
       look: new THREE.Vector3(car.x - 2, 1.8, car.z - 6),
     });
     beacon.update(null, game.time);
